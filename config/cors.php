@@ -15,11 +15,11 @@ return [
     |
     */
 
-    'paths' => ['api/*', 'sanctum/csrf-cookie'],
+    'paths' => ['*'],
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => explode(',', env('CORS_ALLOWED_ORIGINS', 'https://social.w3lead.in,https://social-dashboard.w3lead.in,http://localhost:3000')),
+    'allowed_origins' => explode(',', env('CORS_ALLOWED_ORIGINS', 'https://social.w3lead.in,https://social-dashboard.w3lead.in,http://localhost:3000,http://localhost:5173')),
 
     'allowed_origins_patterns' => [],
 
