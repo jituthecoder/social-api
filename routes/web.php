@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\PostController;
 use App\Http\Controllers\Api\V1\WorkspaceController;
+use App\Http\Controllers\OAuthController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -12,6 +13,18 @@ Route::get('/', function () {
         'version' => 'v1',
     ]);
 });
+
+/*
+|--------------------------------------------------------------------------
+| OAuth Callbacks (Browser Redirect)
+|--------------------------------------------------------------------------
+|
+| Social platforms redirect the user's browser here after authorization.
+| The OAuthController exchanges the code for tokens and redirects to the
+| dashboard with the connection result.
+|
+*/
+Route::get('/oauth/{platform}/callback', [OAuthController::class, 'callback']);
 
 /*
 |--------------------------------------------------------------------------
@@ -35,4 +48,5 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('posts', PostController::class);
     });
 });
+
 

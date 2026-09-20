@@ -8,6 +8,7 @@ use App\Http\Requests\Post\CreatePostRequest;
 use App\Models\Post;
 use App\Models\Workspace;
 use App\Services\PostService;
+use App\Services\PublishingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -17,7 +18,8 @@ class PostController extends Controller
     use ApiResponseTrait;
 
     public function __construct(
-        protected PostService $postService
+        protected PostService $postService,
+        protected PublishingService $publishingService
     ) {}
 
     protected function resolveWorkspace(Request $request): Workspace
@@ -79,7 +81,27 @@ class PostController extends Controller
             $request->validated()
         );
 
+        if ($request->boolean('publish_now')) {
+            $this->publishingService->publishPost($post);
+            $post->load(['variants', 'targets.socialAccount', 'media', 'publishAttempts']);
+        }
+
         return $this->successResponse($post, 'Post created successfully', 201);
+    }
+
+    public function publish(Request $request, Post $post): JsonResponse
+    {
+        $workspace = $this->resolveWorkspace($request);
+        Gate::authorize('update', [$post, $workspace]);
+
+        $success = $this->publishingService->publishPost($post);
+
+        $post->load(['variants', 'targets.socialAccount', 'media', 'publishAttempts']);
+
+        return $this->successResponse([
+            'post' => $post,
+            'success' => $success,
+        ], $success ? 'Post published successfully' : 'Publishing failed for one or more targets');
     }
 
     public function show(Request $request, Post $post): JsonResponse

@@ -26,8 +26,17 @@ class PublishingService
 
     public function getProvider(string $platform): ?SocialProviderInterface
     {
+        $platform = strtolower($platform);
+        if ($platform === 'meta') {
+            $platform = 'facebook';
+        }
+        if ($platform === 'x') {
+            $platform = 'twitter';
+        }
+
         return $this->providers[$platform] ?? null;
     }
+
 
     public function publishPost(Post $post): bool
     {
@@ -35,7 +44,7 @@ class PublishingService
         $hasErrors = false;
         $publishedCount = 0;
 
-        $post->load(['targets.socialAccount', 'variants']);
+        $post->load(['targets.socialAccount', 'variants', 'media']);
 
         foreach ($post->targets as $target) {
             $socialAccount = $target->socialAccount;
@@ -50,6 +59,17 @@ class PublishingService
                 ->where('social_account_id', $socialAccount->id)
                 ->first() 
                 ?? $post->variants->where('platform', $socialAccount->platform)->first();
+
+            if (!$variant) {
+                $variant = $post->variants()->create([
+                    'social_account_id' => $socialAccount->id,
+                    'platform'          => $socialAccount->platform,
+                    'content'           => $post->content,
+                    'status'            => 'pending',
+                ]);
+            }
+
+            $variant->setRelation('post', $post);
 
             try {
                 $provider = $this->getProvider($socialAccount->platform);
@@ -68,10 +88,26 @@ class PublishingService
                 if ($result['success'] ?? false) {
                     $target->update(['status' => 'published']);
                     if ($variant) {
-                        $variant->update(['status' => 'published', 'published_at' => now()]);
+                        $meta = $variant->metadata ?? [];
+                        if (!empty($result['external_id'])) {
+                            $meta['external_id'] = $result['external_id'];
+                        }
+                        if (!empty($result['external_url'])) {
+                            $meta['external_url'] = $result['external_url'];
+                        }
+                        $variant->update([
+                            'status'       => 'published',
+                            'published_at' => now(),
+                            'metadata'     => $meta,
+                        ]);
                     }
 
-                    $this->recordAttempt($post, $variant, $socialAccount, 'success', null, null, $result['response'] ?? []);
+                    $rawResponse = is_array($result['response'] ?? null) ? $result['response'] : [];
+                    if (!empty($result['external_id'])) {
+                        $rawResponse['external_id'] = $result['external_id'];
+                    }
+
+                    $this->recordAttempt($post, $variant, $socialAccount, 'success', null, null, $rawResponse);
                     $publishedCount++;
                 } else {
                     $target->update(['status' => 'failed']);
