@@ -21,7 +21,7 @@ Route::prefix('v1')->group(function () {
     // Auth Routes
     Route::prefix('auth')->group(function () {
         Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:10,1');
-        Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+        Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:10,1')->name('login');
         Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->middleware('throttle:5,1');
         Route::post('/reset-password', [AuthController::class, 'resetPassword'])->middleware('throttle:5,1');
 
@@ -48,6 +48,7 @@ Route::prefix('v1')->group(function () {
 
         // Posts
         Route::apiResource('posts', PostController::class);
+        Route::post('/posts/{post}/publish', [PostController::class, 'publish']);
 
         // Media
         Route::apiResource('media', MediaController::class)->only(['index', 'store', 'destroy']);

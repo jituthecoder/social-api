@@ -33,7 +33,9 @@ class SocialAccountToken extends Model
         'access_token' => 'encrypted',
         'refresh_token' => 'encrypted',
         'expires_at' => 'datetime',
+        'scopes' => 'array',
     ];
+
 
     public function socialAccount(): BelongsTo
     {

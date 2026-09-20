@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\ApiResponseTrait;
 use App\Models\OauthState;
 use App\Models\SocialAccount;
 use App\Models\Workspace;
+use App\Services\SocialProviders\AbstractSocialProvider;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -57,34 +58,53 @@ class SocialAccountController extends Controller
         return $this->successResponse(null, 'Social account disconnected successfully');
     }
 
+    /**
+     * Initialize an OAuth flow for a given platform.
+     *
+     * Generates a CSRF state token, stores it in oauth_states,
+     * and returns the platform-specific OAuth authorization URL.
+     */
     public function connect(Request $request, string $platform): JsonResponse
     {
         $workspace = $this->resolveWorkspace($request);
+        $platform  = strtolower($platform);
+        $provider  = $this->resolveProvider($platform);
+
+        if (!$provider) {
+            return $this->errorResponse("Platform '{$platform}' is not supported.", [], 400);
+        }
+
         $stateToken = Str::random(40);
 
         OauthState::create([
             'workspace_id' => $workspace->id,
-            'user_id' => $request->user()->id,
-            'platform' => strtolower($platform),
-            'state_token' => $stateToken,
-            'expires_at' => now()->addMinutes(15),
+            'user_id'      => $request->user()->id,
+            'platform'     => $platform,
+            'state_token'  => $stateToken,
+            'expires_at'   => now()->addMinutes(15),
         ]);
 
-        // Generate redirect OAuth URL architecture for frontend
-        $authUrl = config("services.{$platform}.redirect_url")
-            ? "https://api.social.w3lead.in/oauth/{$platform}?state={$stateToken}"
-            : "https://social-dashboard.w3lead.in/dashboard/social-accounts?connected=mock_{$platform}&state={$stateToken}";
+        $redirectUri = config("services.{$platform}.redirect_uri");
+        $authUrl     = $provider->getAuthorizationUrl($stateToken, $redirectUri);
 
         return $this->successResponse([
-            'platform' => $platform,
-            'state' => $stateToken,
+            'platform'     => $platform,
+            'state'        => $stateToken,
             'redirect_url' => $authUrl,
         ], 'OAuth flow initialized');
     }
 
+    /**
+     * Handle an OAuth callback via API (JSON response).
+     *
+     * Browser-based callbacks are handled by OAuthController instead.
+     * This endpoint supports AJAX/programmatic OAuth flows.
+     */
     public function callback(Request $request, string $platform): JsonResponse
     {
         $stateToken = $request->query('state');
+        $code       = $request->query('code');
+
         $oauthState = OauthState::where('state_token', $stateToken)
             ->where('expires_at', '>', now())
             ->first();
@@ -93,34 +113,41 @@ class SocialAccountController extends Controller
             return $this->errorResponse('Invalid or expired OAuth state token', [], 400);
         }
 
-        // Mock connect architecture for testing during foundation stage
-        $account = SocialAccount::updateOrCreate(
-            [
+        $provider = $this->resolveProvider(strtolower($platform));
+
+        if (!$provider || !$code) {
+            $oauthState->delete();
+            return $this->errorResponse('Missing authorization code or unsupported platform.', [], 400);
+        }
+
+        try {
+            $redirectUri = config("services.{$platform}.redirect_uri");
+
+            $account = $provider->connect([
+                'code'         => $code,
+                'redirect_uri' => $redirectUri,
                 'workspace_id' => $oauthState->workspace_id,
-                'platform' => strtolower($platform),
-                'platform_account_id' => 'mock_acc_' . Str::random(8),
-            ],
-            [
-                'name' => ucfirst($platform) . ' Business Account',
-                'username' => strtolower($platform) . '_user',
-                'account_type' => 'page',
-                'avatar_url' => 'https://ui-avatars.com/api/?name=' . $platform,
-                'connection_status' => 'connected',
-            ]
-        );
+                'state'        => $stateToken,
+            ]);
 
-        $account->token()->updateOrCreate(
-            ['social_account_id' => $account->id],
-            [
-                'access_token' => 'enc_access_token_' . Str::random(32),
-                'refresh_token' => 'enc_refresh_token_' . Str::random(32),
-                'expires_at' => now()->addDays(60),
-                'scopes' => 'read,write,publish',
-            ]
-        );
+            $oauthState->delete();
 
-        $oauthState->delete();
+            return $this->successResponse($account, 'Social account connected successfully');
+        } catch (\Exception $e) {
+            $oauthState->delete();
 
-        return $this->successResponse($account, 'Social account connected successfully');
+            return $this->errorResponse('Failed to connect social account: ' . $e->getMessage(), [], 500);
+        }
+    }
+
+    /**
+     * Resolve a social provider instance from the config registry.
+     */
+    protected function resolveProvider(string $platform): ?AbstractSocialProvider
+    {
+        $class = config('services.social_providers.' . $platform);
+
+        return $class ? app($class) : null;
     }
 }
+

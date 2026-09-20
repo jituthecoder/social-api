@@ -45,4 +45,42 @@ class Media extends Model
             ->withPivot('position')
             ->withTimestamps();
     }
+
+    public function getBinaryContent(): ?string
+    {
+        $disk = $this->metadata['disk'] ?? config('filesystems.default', 'public');
+        if (\Illuminate\Support\Facades\Storage::disk($disk)->exists($this->path)) {
+            return \Illuminate\Support\Facades\Storage::disk($disk)->get($this->path);
+        }
+
+        if (!empty($this->metadata['local_path']) && file_exists($this->metadata['local_path'])) {
+            return file_get_contents($this->metadata['local_path']);
+        }
+
+        if (filter_var($this->url, FILTER_VALIDATE_URL)) {
+            $content = @file_get_contents($this->url);
+            if ($content !== false) {
+                return $content;
+            }
+        }
+
+        return null;
+    }
+
+    public function getLocalFilePath(): ?string
+    {
+        $disk = $this->metadata['disk'] ?? config('filesystems.default', 'public');
+        if ($disk === 'public') {
+            $fullPath = storage_path('app/public/' . $this->path);
+            if (file_exists($fullPath)) {
+                return $fullPath;
+            }
+        }
+
+        if (!empty($this->metadata['local_path']) && file_exists($this->metadata['local_path'])) {
+            return $this->metadata['local_path'];
+        }
+
+        return null;
+    }
 }

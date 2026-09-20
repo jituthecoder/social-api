@@ -46,7 +46,28 @@ class MediaController extends Controller
         $workspace = $this->resolveWorkspace($request);
 
         $request->validate([
-            'file' => 'required|file|mimes:jpeg,jpg,png,gif,webp,mp4,mov,avi|max:51200', // 50MB max
+            'file' => [
+                'required',
+                'file',
+                'max:51200', // 50MB max
+                function ($attribute, $value, $fail) {
+                    $mime = $value->getMimeType() ?? '';
+                    $ext  = strtolower($value->getClientOriginalExtension() ?? '');
+
+                    $allowedExts = [
+                        'jpeg', 'jpg', 'png', 'gif', 'webp', 'jfif', 'avif', 'svg', 'heic', 'heif', 'bmp',
+                        'mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v', 'wmv'
+                    ];
+
+                    $isMediaMime = str_starts_with($mime, 'image/') || 
+                                   str_starts_with($mime, 'video/') || 
+                                   $mime === 'application/octet-stream';
+
+                    if (!in_array($ext, $allowedExts) && !$isMediaMime) {
+                        $fail('The file must be an image (JPG, PNG, WebP, GIF, AVIF) or a video (MP4, MOV, AVI).');
+                    }
+                },
+            ],
         ]);
 
         $media = $this->mediaService->uploadMedia(
@@ -55,7 +76,7 @@ class MediaController extends Controller
             $request->file('file')
         );
 
-        return $this->successResponse($media, 'File uploaded to S3 successfully', 201);
+        return $this->successResponse($media, 'File uploaded successfully', 201);
     }
 
     public function destroy(Request $request, Media $media): JsonResponse

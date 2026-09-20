@@ -35,4 +35,75 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Social Platform OAuth Credentials
+    |--------------------------------------------------------------------------
+    */
+
+    'linkedin' => [
+        'client_id'     => env('LINKEDIN_CLIENT_ID'),
+        'client_secret' => env('LINKEDIN_CLIENT_SECRET'),
+        'redirect_uri'  => env('LINKEDIN_REDIRECT_URI', env('APP_URL') . '/oauth/linkedin/callback'),
+    ],
+
+    'youtube' => [
+        'client_id'     => env('YOUTUBE_CLIENT_ID'),
+        'client_secret' => env('YOUTUBE_CLIENT_SECRET'),
+        'redirect_uri'  => env('YOUTUBE_REDIRECT_URI', env('APP_URL') . '/oauth/youtube/callback'),
+    ],
+
+    'facebook' => [
+        'client_id'     => env('FACEBOOK_CLIENT_ID'),
+        'client_secret' => env('FACEBOOK_CLIENT_SECRET'),
+        'redirect_uri'  => env('FACEBOOK_REDIRECT_URI', env('APP_URL') . '/oauth/facebook/callback'),
+    ],
+
+    'instagram' => [
+        'client_id'     => env('INSTAGRAM_CLIENT_ID', env('FACEBOOK_CLIENT_ID')),
+        'client_secret' => env('INSTAGRAM_CLIENT_SECRET', env('FACEBOOK_CLIENT_SECRET')),
+        'redirect_uri'  => env('INSTAGRAM_REDIRECT_URI', env('APP_URL') . '/oauth/instagram/callback'),
+    ],
+
+    'twitter' => [
+        'client_id'     => env('TWITTER_CLIENT_ID'),
+        'client_secret' => env('TWITTER_CLIENT_SECRET'),
+        'redirect_uri'  => env('TWITTER_REDIRECT_URI', env('APP_URL') . '/oauth/twitter/callback'),
+    ],
+
+    'x' => [
+        'client_id'     => env('TWITTER_CLIENT_ID'),
+        'client_secret' => env('TWITTER_CLIENT_SECRET'),
+        'redirect_uri'  => env('TWITTER_REDIRECT_URI', env('APP_URL') . '/oauth/twitter/callback'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Social Provider Class Registry
+    |--------------------------------------------------------------------------
+    |
+    | Maps platform identifiers to their provider implementation class.
+    | Used by SocialAccountController and OAuthController to resolve providers.
+    |
+    */
+
+    'social_providers' => [
+        'linkedin'  => \App\Services\SocialProviders\LinkedInProvider::class,
+        'youtube'   => \App\Services\SocialProviders\YouTubeProvider::class,
+        'facebook'  => \App\Services\SocialProviders\FacebookProvider::class,
+        'meta'      => \App\Services\SocialProviders\FacebookProvider::class,
+        'instagram' => \App\Services\SocialProviders\InstagramProvider::class,
+        'twitter'   => \App\Services\SocialProviders\TwitterProvider::class,
+        'x'         => \App\Services\SocialProviders\TwitterProvider::class,
+    ],
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Dashboard URL (OAuth redirect target)
+    |--------------------------------------------------------------------------
+    */
+
+    'dashboard_url' => env('DASHBOARD_URL', 'http://localhost:5173'),
+
 ];

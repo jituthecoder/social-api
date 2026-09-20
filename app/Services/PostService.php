@@ -51,6 +51,7 @@ class PostService
             }
 
             // Create platform variants if provided, or default variants
+            $createdPlatforms = [];
             if (!empty($data['variants']) && is_array($data['variants'])) {
                 foreach ($data['variants'] as $variantData) {
                     $post->variants()->create([
@@ -62,6 +63,26 @@ class PostService
                         'status' => 'pending',
                         'scheduled_at' => $scheduledAtUtc,
                     ]);
+                    $createdPlatforms[] = $variantData['platform'];
+                }
+            }
+
+            // Ensure every targeted account has a variant created
+            if (!empty($data['social_account_ids'])) {
+                $targetAccounts = \App\Models\SocialAccount::whereIn('id', $data['social_account_ids'])->get();
+                foreach ($targetAccounts as $account) {
+                    if (!in_array($account->platform, $createdPlatforms)) {
+                        $post->variants()->create([
+                            'social_account_id' => $account->id,
+                            'platform' => $account->platform,
+                            'content' => $data['content'],
+                            'hashtags' => [],
+                            'metadata' => [],
+                            'status' => 'pending',
+                            'scheduled_at' => $scheduledAtUtc,
+                        ]);
+                        $createdPlatforms[] = $account->platform;
+                    }
                 }
             }
 
