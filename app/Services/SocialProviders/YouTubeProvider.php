@@ -29,6 +29,12 @@ class YouTubeProvider extends AbstractSocialProvider
         return 'youtube';
     }
 
+    // YouTube-specific timeout overrides
+    protected int $timeoutDefault = 30;
+    protected int $timeoutUpload  = 120;
+    protected int $timeoutVideoUp = 300;  // Large video uploads
+    protected int $maxRetries     = 2;    // Video uploads are expensive — limit retries
+
     // ──────────────────────────────────────────────────────────────────────
     // OAuth 2.0 (Google)
     // ──────────────────────────────────────────────────────────────────────
@@ -264,19 +270,45 @@ class YouTubeProvider extends AbstractSocialProvider
 
         $fileSize = strlen($videoContent);
 
+        // ── Shorts Auto-Detection ──────────────────────────────────────────
+        // YouTube Shorts are ≤60 seconds and vertical. We can't easily check
+        // duration in pure PHP without ffprobe, but we use file size as a
+        // proxy: videos < 15 MB are very likely Shorts. If the user explicitly
+        // set a #Shorts tag in their content, we also honor that.
+        $contentLower   = strtolower($variant->content ?? '');
+        $hasShortsTag   = str_contains($contentLower, '#shorts');
+        $isLikelyShorts = $fileSize < (15 * 1024 * 1024); // < 15 MB proxy
+        $isShorts       = $hasShortsTag || $isLikelyShorts;
+
+        $videoTitle = $metadata['title'] ?? $post?->title ?? 'Untitled Video';
+        $videoDesc  = $variant->content ?? '';
+
+        if ($isShorts) {
+            // YouTube needs #Shorts in title OR description to classify as Short
+            if (!str_contains(strtolower($videoTitle), '#shorts')) {
+                $videoTitle = rtrim($videoTitle, ' ') . ' #Shorts';
+                // Trim to 100 chars max (YouTube limit)
+                $videoTitle = mb_substr($videoTitle, 0, 100);
+            }
+            if (!str_contains(strtolower($videoDesc), '#shorts')) {
+                $videoDesc = $videoDesc . "\n\n#Shorts";
+            }
+        }
+
         // Step 1: Initialize resumable upload session
         $videoMetadata = [
             'snippet' => [
-                'title'       => $metadata['title'] ?? $post?->title ?? 'Untitled Video',
-                'description' => $variant->content ?? '',
+                'title'       => $videoTitle,
+                'description' => $videoDesc,
                 'tags'        => $variant->hashtags ?? $metadata['tags'] ?? [],
                 'categoryId'  => $metadata['category_id'] ?? '22', // 22 = People & Blogs
             ],
             'status' => [
-                'privacyStatus'          => $metadata['privacy_status'] ?? 'public',
+                'privacyStatus'           => $metadata['privacy_status'] ?? 'public',
                 'selfDeclaredMadeForKids' => (bool) ($metadata['made_for_kids'] ?? false),
             ],
         ];
+
 
         $initResponse = Http::withToken($token->access_token)
             ->withHeaders([
@@ -311,14 +343,8 @@ class YouTubeProvider extends AbstractSocialProvider
             ];
         }
 
-        // Step 2: Upload the video binary to the resumable session URL
-        $uploadResponse = Http::timeout(180)
-            ->withHeaders([
-                'Content-Type'   => $mimeType,
-                'Content-Length' => (string) $fileSize,
-            ])
-            ->withBody($videoContent, $mimeType)
-            ->put($uploadUrl);
+        // Step 2: Upload the video binary using the shared retry-enabled helper
+        $uploadResponse = $this->apiUploadVideo($uploadUrl, $videoContent, $mimeType, $fileSize);
 
         if ($uploadResponse->failed()) {
             Log::error('YouTube video upload failed', [
@@ -354,8 +380,10 @@ class YouTubeProvider extends AbstractSocialProvider
             return false;
         }
 
-        $response = Http::withToken($token->access_token)
-            ->delete(self::VIDEOS_API_URL . '?id=' . urlencode($externalPostId));
+        $response = $this->apiDelete(
+            self::VIDEOS_API_URL . '?id=' . urlencode($externalPostId),
+            $token->access_token
+        );
 
         return $response->successful();
     }

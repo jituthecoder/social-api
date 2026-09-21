@@ -82,11 +82,11 @@ class PostController extends Controller
         );
 
         if ($request->boolean('publish_now')) {
-            $this->publishingService->publishPost($post);
+            \App\Jobs\PublishPostJob::dispatch($post);
             $post->load(['variants', 'targets.socialAccount', 'media', 'publishAttempts']);
         }
 
-        return $this->successResponse($post, 'Post created successfully', 201);
+        return $this->successResponse($post, 'Post created and queued for publishing', 201);
     }
 
     public function publish(Request $request, Post $post): JsonResponse
@@ -94,14 +94,14 @@ class PostController extends Controller
         $workspace = $this->resolveWorkspace($request);
         Gate::authorize('update', [$post, $workspace]);
 
-        $success = $this->publishingService->publishPost($post);
+        \App\Jobs\PublishPostJob::dispatch($post);
 
         $post->load(['variants', 'targets.socialAccount', 'media', 'publishAttempts']);
 
         return $this->successResponse([
             'post' => $post,
-            'success' => $success,
-        ], $success ? 'Post published successfully' : 'Publishing failed for one or more targets');
+            'success' => true,
+        ], 'Post queued for publishing');
     }
 
     public function show(Request $request, Post $post): JsonResponse
@@ -128,6 +128,20 @@ class PostController extends Controller
         );
 
         return $this->successResponse($updatedPost, 'Post updated successfully');
+    }
+
+    public function destroyTarget(Request $request, Post $post, \App\Models\PostTarget $target): JsonResponse
+    {
+        $workspace = $this->resolveWorkspace($request);
+        Gate::authorize('delete', [$post, $workspace]);
+
+        if ($target->post_id !== $post->id) {
+            return $this->errorResponse('Target does not belong to this post', 400);
+        }
+
+        $result = $this->postService->deletePostTarget($post, $target, $workspace, $request->user());
+
+        return $this->successResponse($result, 'Post removed from platform successfully');
     }
 
     public function destroy(Request $request, Post $post): JsonResponse

@@ -31,6 +31,12 @@ class LinkedInProvider extends AbstractSocialProvider
         return 'linkedin';
     }
 
+    // LinkedIn-specific timeout overrides
+    protected int $timeoutDefault = 45;   // LinkedIn API is sometimes slow
+    protected int $timeoutUpload  = 120;  // Image upload
+    protected int $timeoutVideoUp = 300;  // Video upload
+    protected int $maxRetries     = 3;
+
     // ──────────────────────────────────────────────────────────────────────
     // OAuth 2.0
     // ──────────────────────────────────────────────────────────────────────
@@ -254,9 +260,7 @@ class LinkedInProvider extends AbstractSocialProvider
         $uploadUrl = $initResponse->json('value.uploadUrl');
         $imageUrn  = $initResponse->json('value.image');
 
-        $uploadResponse = Http::withToken($token->access_token)
-            ->withBody($binaryContent, $mimeType)
-            ->put($uploadUrl);
+        $uploadResponse = $this->apiUploadBinaryPut($uploadUrl, $binaryContent, $mimeType);
 
         if ($uploadResponse->failed()) {
             Log::error('LinkedIn image upload failed', ['status' => $uploadResponse->status()]);
@@ -300,13 +304,7 @@ class LinkedInProvider extends AbstractSocialProvider
             return null;
         }
 
-        $uploadResponse = Http::timeout(180)
-            ->withHeaders([
-                'Content-Type'   => $mimeType,
-                'Content-Length' => (string) $fileSize,
-            ])
-            ->withBody($binaryContent, $mimeType)
-            ->put($uploadUrl);
+        $uploadResponse = $this->apiUploadVideo($uploadUrl, $binaryContent, $mimeType, $fileSize);
 
         if ($uploadResponse->failed()) {
             Log::error('LinkedIn video upload failed', ['status' => $uploadResponse->status()]);
@@ -406,9 +404,7 @@ class LinkedInProvider extends AbstractSocialProvider
             ];
         }
 
-        $response = Http::withToken($token->access_token)
-            ->withHeaders($this->linkedInHeaders())
-            ->post(self::POSTS_URL, $postBody);
+        $response = $this->apiPost(self::POSTS_URL, $token->access_token, $postBody, $this->linkedInHeaders());
 
         if ($response->failed()) {
             Log::error('LinkedIn publish failed', [
@@ -443,9 +439,7 @@ class LinkedInProvider extends AbstractSocialProvider
             return false;
         }
 
-        $response = Http::withToken($token->access_token)
-            ->withHeaders($this->linkedInHeaders())
-            ->delete(self::POSTS_URL . '/' . urlencode($externalPostId));
+        $response = $this->apiDelete(self::POSTS_URL . '/' . urlencode($externalPostId), $token->access_token, $this->linkedInHeaders());
 
         return $response->successful();
     }

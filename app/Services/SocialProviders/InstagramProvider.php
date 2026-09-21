@@ -309,7 +309,7 @@ class InstagramProvider extends AbstractSocialProvider
         $publicUrl = $this->resolvePublicMediaUrl($mediaItem);
 
         // Step 1: Create Image Container
-        $containerResponse = Http::asForm()->post(self::GRAPH_URL . "/{$igUserId}/media", [
+        $containerResponse = Http::timeout(60)->asForm()->post(self::GRAPH_URL . "/{$igUserId}/media", [
             'image_url'    => $publicUrl,
             'caption'      => $caption,
             'access_token' => $accessToken,
@@ -333,7 +333,7 @@ class InstagramProvider extends AbstractSocialProvider
         foreach ($imageItems as $item) {
             $publicUrl = $this->resolvePublicMediaUrl($item);
 
-            $childRes = Http::asForm()->post(self::GRAPH_URL . "/{$igUserId}/media", [
+            $childRes = Http::timeout(60)->asForm()->post(self::GRAPH_URL . "/{$igUserId}/media", [
                 'image_url'        => $publicUrl,
                 'is_carousel_item' => 'true',
                 'access_token'     => $accessToken,
@@ -375,7 +375,7 @@ class InstagramProvider extends AbstractSocialProvider
         $publicUrl = $this->resolvePublicMediaUrl($videoItem);
 
         // Step 1: Create Video/Reels Container
-        $containerResponse = Http::asForm()->post(self::GRAPH_URL . "/{$igUserId}/media", [
+        $containerResponse = Http::timeout(60)->asForm()->post(self::GRAPH_URL . "/{$igUserId}/media", [
             'media_type'   => 'REELS',
             'video_url'    => $publicUrl,
             'caption'      => $caption,
@@ -502,8 +502,81 @@ class InstagramProvider extends AbstractSocialProvider
 
     protected function resolvePublicMediaUrl($mediaItem): string
     {
-        return $this->ensurePublicUrl($mediaItem->url);
+        $url = $mediaItem->url;
+
+        if (!empty($mediaItem->path) && function_exists('imagecreatefromstring')) {
+            $localPath = storage_path('app/public/' . $mediaItem->path);
+
+            if (file_exists($localPath)) {
+                $ext = strtolower(pathinfo($localPath, PATHINFO_EXTENSION));
+
+                // Always work with a JPG for Instagram
+                $jpgLocalPath = preg_replace('/\.[^.]+$/', '_ig.jpg', $localPath);
+
+                $needsConvert   = ($ext !== 'jpg' && $ext !== 'jpeg');
+                $jpgExists      = file_exists($jpgLocalPath);
+
+                // Load image into GD resource
+                $im = null;
+                if (!$jpgExists) {
+                    $raw = @file_get_contents($localPath);
+                    if ($raw) {
+                        $im = @imagecreatefromstring($raw);
+                    }
+                }
+
+                if ($im || $jpgExists) {
+                    if (!$jpgExists && $im) {
+                        $srcW = imagesx($im);
+                        $srcH = imagesy($im);
+
+                        // ── Aspect Ratio Check ────────────────────────────────────
+                        // Instagram allows: min 0.8 (4:5 portrait) – max 1.91 (landscape)
+                        // Safest: crop to 1:1 square if outside bounds
+                        $ratio = $srcH > 0 ? ($srcW / $srcH) : 1;
+
+                        $cropW = $srcW;
+                        $cropH = $srcH;
+                        $cropX = 0;
+                        $cropY = 0;
+
+                        if ($ratio < 0.8) {
+                            // Too tall (portrait beyond 4:5) → crop height to match 4:5
+                            $cropH = (int) round($srcW / 0.8);
+                            $cropY = (int) round(($srcH - $cropH) / 2);
+                        } elseif ($ratio > 1.91) {
+                            // Too wide (landscape beyond 1.91:1) → crop width to 1.91:1
+                            $cropW = (int) round($srcH * 1.91);
+                            $cropX = (int) round(($srcW - $cropW) / 2);
+                        }
+                        // else: ratio is already within Instagram's valid range — no crop needed
+
+                        $canvas = imagecreatetruecolor($cropW, $cropH);
+                        $white  = imagecolorallocate($canvas, 255, 255, 255);
+                        imagefill($canvas, 0, 0, $white);
+                        imagecopy($canvas, $im, 0, 0, $cropX, $cropY, $cropW, $cropH);
+                        imagejpeg($canvas, $jpgLocalPath, 90);
+                        imagedestroy($im);
+                        imagedestroy($canvas);
+
+                        Log::info('Instagram image prepared', [
+                            'original' => "{$srcW}x{$srcH} ratio=" . round($ratio, 3),
+                            'cropped'  => "{$cropW}x{$cropH}",
+                            'path'     => $jpgLocalPath,
+                        ]);
+                    }
+
+                    if (file_exists($jpgLocalPath)) {
+                        // Rewrite URL to point at the _ig.jpg version
+                        $url = preg_replace('/\.[^.]+$/', '_ig.jpg', $url);
+                    }
+                }
+            }
+        }
+
+        return $this->ensurePublicUrl($url);
     }
+
 
     // ──────────────────────────────────────────────────────────────────────
     // Post Management
