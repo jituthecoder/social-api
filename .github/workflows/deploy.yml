@@ -51,7 +51,7 @@ jobs:
         uses: easingthemes/ssh-deploy@v5.1.0
         with:
           SSH_PRIVATE_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
-          ARGS: '-avzr --no-delete'
+          ARGS: '-avzr'
           SOURCE: './'
           REMOTE_HOST: ${{ secrets.HOSTINGER_HOST }}
           REMOTE_PORT: ${{ secrets.HOSTINGER_PORT }}
