@@ -1,0 +1,77 @@
+name: Deploy to Hostinger
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, bcmath, pdo_mysql
+          tools: composer:v2
+          coverage: none
+
+      - name: Install PHP dependencies
+        run: composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build frontend assets
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Deploy application to Hostinger
+        uses: easingthemes/ssh-deploy@v5.1.0
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.HOSTINGER_SSH_KEY }}
+          ARGS: '-avzr --no-delete'
+          SOURCE: './'
+          REMOTE_HOST: ${{ secrets.HOSTINGER_HOST }}
+          REMOTE_PORT: ${{ secrets.HOSTINGER_PORT }}
+          REMOTE_USER: ${{ secrets.HOSTINGER_USER }}
+          TARGET: '/home/u971218733/domains/a4autopost.com/public_html/laravel-api/'
+          EXCLUDE: '/.git/, /.github/, /node_modules/, /vendor/, /storage/, /.env, /.env.*'
+
+      - name: Install and activate release
+        env:
+          HOSTINGER_HOST: ${{ secrets.HOSTINGER_HOST }}
+          HOSTINGER_PORT: ${{ secrets.HOSTINGER_PORT }}
+          HOSTINGER_USER: ${{ secrets.HOSTINGER_USER }}
+          DEPLOY_PATH: /home/u971218733/domains/a4autopost.com/public_html/laravel-api
+        run: |
+          ssh -p "${HOSTINGER_PORT}" "${HOSTINGER_USER}@${HOSTINGER_HOST}" bash -s -- "${DEPLOY_PATH}" <<'REMOTE'
+          set -e
+          DEPLOY_PATH="$1"
+          cd "$DEPLOY_PATH"
+
+          test -f .env
+          mkdir -p storage/app/public storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+          composer install --no-dev --prefer-dist --no-interaction --no-progress --optimize-autoloader
+          php artisan storage:link || true
+          php artisan optimize:clear
+          php artisan migrate --force
+          php artisan config:cache
+          php artisan view:cache
+          REMOTE
