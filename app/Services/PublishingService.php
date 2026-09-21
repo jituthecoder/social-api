@@ -86,7 +86,11 @@ class PublishingService
                 }
 
                 if ($result['success'] ?? false) {
-                    $target->update(['status' => 'published']);
+                    $target->update([
+                        'status' => 'published',
+                        'external_post_id' => $result['external_id'] ?? null,
+                        'external_url' => $result['external_url'] ?? null,
+                    ]);
                     if ($variant) {
                         $meta = $variant->metadata ?? [];
                         if (!empty($result['external_id'])) {

@@ -49,6 +49,7 @@ Route::prefix('v1')->group(function () {
         // Posts
         Route::apiResource('posts', PostController::class);
         Route::post('/posts/{post}/publish', [PostController::class, 'publish']);
+        Route::delete('/posts/{post}/targets/{target}', [PostController::class, 'destroyTarget']);
 
         // Media
         Route::apiResource('media', MediaController::class)->only(['index', 'store', 'destroy']);

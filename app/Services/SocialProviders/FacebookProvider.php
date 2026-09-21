@@ -261,7 +261,7 @@ class FacebookProvider extends AbstractSocialProvider
                     'access_token' => $token->access_token,
                 ]);
         } else {
-            $res = Http::attach('source', $content, 'photo.jpg')
+            $res = Http::timeout(60)->attach('source', $content, 'photo.jpg')
                 ->post(self::GRAPH_URL . "/{$targetId}/photos", [
                     'published'    => 'false',
                     'temporary'    => 'true',
@@ -349,13 +349,13 @@ class FacebookProvider extends AbstractSocialProvider
         $binary = $mediaItem->getBinaryContent();
 
         if ($binary) {
-            $response = Http::attach('source', $binary, $mediaItem->original_name ?: 'photo.jpg')
+            $response = Http::timeout(60)->attach('source', $binary, $mediaItem->original_name ?: 'photo.jpg')
                 ->post(self::GRAPH_URL . "/{$targetId}/photos", [
                     'message'      => $message,
                     'access_token' => $accessToken,
                 ]);
         } else {
-            $response = Http::asForm()->post(self::GRAPH_URL . "/{$targetId}/photos", [
+            $response = Http::timeout(60)->asForm()->post(self::GRAPH_URL . "/{$targetId}/photos", [
                 'url'          => $mediaItem->url,
                 'message'      => $message,
                 'access_token' => $accessToken,
@@ -385,14 +385,14 @@ class FacebookProvider extends AbstractSocialProvider
             $binary = $img->getBinaryContent();
 
             if ($binary) {
-                $uploadRes = Http::attach('source', $binary, $img->original_name ?: 'photo.jpg')
+                $uploadRes = Http::timeout(60)->attach('source', $binary, $img->original_name ?: 'photo.jpg')
                     ->post(self::GRAPH_URL . "/{$targetId}/photos", [
                         'published'    => 'false',
                         'temporary'    => 'true',
                         'access_token' => $accessToken,
                     ]);
             } else {
-                $uploadRes = Http::asForm()->post(self::GRAPH_URL . "/{$targetId}/photos", [
+                $uploadRes = Http::timeout(60)->asForm()->post(self::GRAPH_URL . "/{$targetId}/photos", [
                     'url'          => $img->url,
                     'published'    => 'false',
                     'temporary'    => 'true',

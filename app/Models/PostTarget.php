@@ -14,6 +14,9 @@ class PostTarget extends Model
         'post_id',
         'social_account_id',
         'status',
+        'external_post_id',
+        'external_url',
+        'error_message',
     ];
 
     public function post(): BelongsTo

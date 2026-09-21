@@ -110,13 +110,172 @@ abstract class AbstractSocialProvider implements SocialProviderInterface
     // ──────────────────────────────────────────────────────────────────────
 
     /**
-     * Perform an authenticated GET request with standard error logging.
+     * Default timeouts (seconds) by operation type.
+     * Override in subclass if platform needs different values.
+     */
+    protected int $timeoutDefault   = 30;   // General API calls
+    protected int $timeoutUpload    = 120;  // Image / binary upload
+    protected int $timeoutVideoUp   = 300;  // Video upload
+    protected int $maxRetries       = 3;    // Attempts before giving up
+
+    /**
+     * Perform an authenticated GET with retry + timeout.
+     */
+    protected function apiGet(string $url, string $accessToken, array $query = [], array $headers = []): \Illuminate\Http\Client\Response
+    {
+        return $this->withRetry(fn () =>
+            Http::timeout($this->timeoutDefault)
+                ->withToken($accessToken)
+                ->withHeaders($headers)
+                ->get($url, $query)
+        );
+    }
+
+    /**
+     * Perform an authenticated JSON POST with retry + timeout.
+     */
+    protected function apiPost(string $url, string $accessToken, array $data = [], array $headers = []): \Illuminate\Http\Client\Response
+    {
+        return $this->withRetry(fn () =>
+            Http::timeout($this->timeoutDefault)
+                ->withToken($accessToken)
+                ->withHeaders($headers)
+                ->post($url, $data)
+        );
+    }
+
+    /**
+     * Perform an authenticated form POST with retry + timeout.
+     */
+    protected function apiFormPost(string $url, string $accessToken, array $data = [], array $headers = []): \Illuminate\Http\Client\Response
+    {
+        return $this->withRetry(fn () =>
+            Http::timeout($this->timeoutDefault)
+                ->withToken($accessToken)
+                ->withHeaders($headers)
+                ->asForm()
+                ->post($url, $data)
+        );
+    }
+
+    /**
+     * Perform an authenticated DELETE with retry + timeout.
+     */
+    protected function apiDelete(string $url, string $accessToken, array $headers = []): \Illuminate\Http\Client\Response
+    {
+        return $this->withRetry(fn () =>
+            Http::timeout($this->timeoutDefault)
+                ->withToken($accessToken)
+                ->withHeaders($headers)
+                ->delete($url)
+        );
+    }
+
+    /**
+     * Upload binary content (image) via PUT with retry + timeout.
+     */
+    protected function apiUploadBinaryPut(string $url, string $binary, string $mimeType, array $headers = []): \Illuminate\Http\Client\Response
+    {
+        return $this->withRetry(fn () =>
+            Http::timeout($this->timeoutUpload)
+                ->withHeaders(array_merge(['Content-Type' => $mimeType], $headers))
+                ->withBody($binary, $mimeType)
+                ->put($url)
+        );
+    }
+
+    /**
+     * Upload binary content (image) via multipart POST with retry + timeout.
+     */
+    protected function apiUploadAttach(string $url, string $accessToken, string $binary, string $filename, array $fields = []): \Illuminate\Http\Client\Response
+    {
+        return $this->withRetry(fn () =>
+            Http::timeout($this->timeoutUpload)
+                ->withToken($accessToken)
+                ->attach('source', $binary, $filename)
+                ->post($url, $fields)
+        );
+    }
+
+    /**
+     * Upload video binary via PUT with longer timeout.
+     */
+    protected function apiUploadVideo(string $url, string $binary, string $mimeType, int $fileSize): \Illuminate\Http\Client\Response
+    {
+        return $this->withRetry(fn () =>
+            Http::timeout($this->timeoutVideoUp)
+                ->withHeaders([
+                    'Content-Type'   => $mimeType,
+                    'Content-Length' => (string) $fileSize,
+                ])
+                ->withBody($binary, $mimeType)
+                ->put($url),
+            2  // Video upload: max 2 retries (expensive operation)
+        );
+    }
+
+    /**
+     * Retry wrapper with exponential back-off.
+     *
+     * Retries on:
+     *  - cURL/network exceptions (timeout, SSL, connection reset)
+     *  - HTTP 429 Too Many Requests (rate limit)
+     *  - HTTP 5xx Server Errors (transient failures)
+     *
+     * @param  callable  $call      A closure that returns an Http Response.
+     * @param  int|null  $maxTries  Override default maxRetries.
+     */
+    protected function withRetry(callable $call, ?int $maxTries = null): \Illuminate\Http\Client\Response
+    {
+        $tries   = $maxTries ?? $this->maxRetries;
+        $attempt = 0;
+
+        while (true) {
+            $attempt++;
+            try {
+                /** @var \Illuminate\Http\Client\Response $response */
+                $response = $call();
+
+                // Retry on rate-limit or server errors (5xx)
+                $status = $response->status();
+                if ($attempt < $tries && ($status === 429 || $status >= 500)) {
+                    $wait = $status === 429
+                        ? (int) ($response->header('Retry-After') ?: (2 ** $attempt))
+                        : (2 ** $attempt);
+
+                    Log::warning("[{$this->getPlatformIdentifier()}] HTTP {$status} on attempt {$attempt}. Retrying in {$wait}s.", [
+                        'url'    => $response->effectiveUri()?->__toString(),
+                        'status' => $status,
+                    ]);
+                    sleep($wait);
+                    continue;
+                }
+
+                return $response;
+
+            } catch (\Illuminate\Http\Client\ConnectionException $e) {
+                // Network-level error (cURL timeout, SSL handshake, connection reset)
+                Log::warning("[{$this->getPlatformIdentifier()}] Connection error on attempt {$attempt}: " . $e->getMessage());
+
+                if ($attempt >= $tries) {
+                    Log::error("[{$this->getPlatformIdentifier()}] All {$tries} attempts failed. Last error: " . $e->getMessage());
+                    // Re-throw so the caller can handle it gracefully
+                    throw $e;
+                }
+
+                $wait = 2 ** $attempt; // 2s, 4s, 8s…
+                Log::info("[{$this->getPlatformIdentifier()}] Retrying in {$wait}s (attempt {$attempt}/{$tries}).");
+                sleep($wait);
+            }
+        }
+    }
+
+    /**
+     * @deprecated Use apiGet() instead.
      */
     protected function authenticatedGet(string $url, string $accessToken, array $query = [], array $headers = []): array
     {
-        $response = Http::withToken($accessToken)
-            ->withHeaders($headers)
-            ->get($url, $query);
+        $response = $this->apiGet($url, $accessToken, $query, $headers);
 
         if ($response->failed()) {
             Log::error('Social API GET failed', [
@@ -137,13 +296,11 @@ abstract class AbstractSocialProvider implements SocialProviderInterface
     }
 
     /**
-     * Perform an authenticated POST request with standard error logging.
+     * @deprecated Use apiPost() instead.
      */
     protected function authenticatedPost(string $url, string $accessToken, array $data = [], array $headers = []): array
     {
-        $response = Http::withToken($accessToken)
-            ->withHeaders($headers)
-            ->post($url, $data);
+        $response = $this->apiPost($url, $accessToken, $data, $headers);
 
         if ($response->failed()) {
             Log::error('Social API POST failed', [
@@ -164,3 +321,4 @@ abstract class AbstractSocialProvider implements SocialProviderInterface
         return array_merge($response->json(), ['success' => true]);
     }
 }
+

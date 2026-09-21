@@ -14,7 +14,8 @@ class PostService
 {
     public function __construct(
         protected SchedulingService $schedulingService,
-        protected AuditLogService $auditLogService
+        protected AuditLogService $auditLogService,
+        protected PublishingService $publishingService
     ) {}
 
     public function createPost(Workspace $workspace, User $user, array $data): Post
@@ -34,7 +35,7 @@ class PostService
                 'workspace_id' => $workspace->id,
                 'user_id' => $user->id,
                 'title' => $data['title'] ?? null,
-                'content' => $data['content'],
+                'content' => $data['content'] ?? '',
                 'status' => $status,
                 'scheduled_at' => $scheduledAtUtc,
                 'settings' => $data['settings'] ?? [],
@@ -57,7 +58,7 @@ class PostService
                     $post->variants()->create([
                         'social_account_id' => $variantData['social_account_id'] ?? null,
                         'platform' => $variantData['platform'],
-                        'content' => $variantData['content'] ?? $data['content'],
+                        'content' => $variantData['content'] ?? ($data['content'] ?? ''),
                         'hashtags' => $variantData['hashtags'] ?? [],
                         'metadata' => $variantData['metadata'] ?? [],
                         'status' => 'pending',
@@ -75,7 +76,7 @@ class PostService
                         $post->variants()->create([
                             'social_account_id' => $account->id,
                             'platform' => $account->platform,
-                            'content' => $data['content'],
+                            'content' => $data['content'] ?? '',
                             'hashtags' => [],
                             'metadata' => [],
                             'status' => 'pending',
@@ -140,6 +141,38 @@ class PostService
                 }
             }
 
+            if (isset($data['social_account_ids']) && is_array($data['social_account_ids'])) {
+                if (in_array($post->status, ['draft', 'scheduled'])) {
+                    $post->targets()->whereNotIn('social_account_id', $data['social_account_ids'])->delete();
+                    $post->variants()->whereNotIn('social_account_id', $data['social_account_ids'])->delete();
+                }
+                $existingAccountIds = $post->targets()->pluck('social_account_id')->toArray();
+                foreach ($data['social_account_ids'] as $accountId) {
+                    if (!in_array($accountId, $existingAccountIds)) {
+                        $post->targets()->create([
+                            'social_account_id' => $accountId,
+                            'status' => 'pending',
+                        ]);
+                    }
+                }
+            }
+
+            if (!empty($data['variants']) && is_array($data['variants'])) {
+                foreach ($data['variants'] as $vData) {
+                    $post->variants()->updateOrCreate(
+                        [
+                            'post_id' => $post->id,
+                            'platform' => $vData['platform'],
+                        ],
+                        [
+                            'content' => $vData['content'] ?? $post->content,
+                            'metadata' => $vData['metadata'] ?? [],
+                            'status' => 'pending',
+                        ]
+                    );
+                }
+            }
+
             if ($status === 'scheduled' && $scheduledAtUtc) {
                 ScheduledPost::updateOrCreate(
                     ['post_id' => $post->id],
@@ -159,8 +192,120 @@ class PostService
         });
     }
 
+    public function deletePostTarget(Post $post, PostTarget $target, Workspace $workspace, User $user): array
+    {
+        $target->load('socialAccount');
+        $socialAccount = $target->socialAccount;
+        $platformDeleted = false;
+        $platformName = $socialAccount?->platform ?? 'unknown';
+
+        // 1. Delete on the remote social media platform if external ID exists
+        if (
+            $socialAccount &&
+            !empty($target->external_post_id) &&
+            $socialAccount->connection_status === 'connected'
+        ) {
+            try {
+                $provider = $this->publishingService->getProvider($socialAccount->platform);
+                if ($provider) {
+                    $platformDeleted = $provider->deletePost($socialAccount, $target->external_post_id);
+                    \Illuminate\Support\Facades\Log::info("Individual platform delete on {$socialAccount->platform}", [
+                        'post_id' => $post->id,
+                        'target_id' => $target->id,
+                        'external_post_id' => $target->external_post_id,
+                        'deleted' => $platformDeleted,
+                    ]);
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning("Could not delete post from {$socialAccount->platform}: " . $e->getMessage(), [
+                    'post_id' => $post->id,
+                    'target_id' => $target->id,
+                ]);
+            }
+        }
+
+        // 2. Delete corresponding PostVariant for this platform / account
+        if ($socialAccount) {
+            $post->variants()
+                ->where(function ($q) use ($socialAccount) {
+                    $q->where('social_account_id', $socialAccount->id)
+                      ->orWhere('platform', $socialAccount->platform);
+                })
+                ->delete();
+        }
+
+        // 3. Delete this target record
+        $target->delete();
+
+        // 4. Update post status based on remaining targets
+        $remainingTargets = $post->targets()->get();
+        if ($remainingTargets->isEmpty()) {
+            $post->update(['status' => 'draft']);
+        } else {
+            $hasPublished = $remainingTargets->contains(fn($t) => $t->status === 'published');
+            $hasFailed = $remainingTargets->contains(fn($t) => $t->status === 'failed');
+
+            if ($hasPublished && !$hasFailed) {
+                $post->update(['status' => 'published']);
+            } elseif ($hasPublished && $hasFailed) {
+                $post->update(['status' => 'partially_failed']);
+            } elseif ($hasFailed) {
+                $post->update(['status' => 'failed']);
+            }
+        }
+
+        $this->auditLogService->log('post.target_deleted', $workspace, $user, [
+            'post_id' => $post->id,
+            'platform' => $platformName,
+            'platform_deleted' => $platformDeleted,
+        ]);
+
+        return [
+            'platform' => $platformName,
+            'remote_deleted' => $platformDeleted,
+            'remaining_targets_count' => $remainingTargets->count(),
+        ];
+    }
+
     public function deletePost(Post $post, Workspace $workspace, User $user): bool
     {
+        // ── Step 1: Delete from all social platforms that have an external post ID ──
+        $post->load(['targets.socialAccount']);
+
+        foreach ($post->targets as $target) {
+            $socialAccount = $target->socialAccount;
+
+            // Only attempt if we have the external post ID and a connected account
+            if (
+                empty($target->external_post_id) ||
+                !$socialAccount ||
+                $socialAccount->connection_status !== 'connected'
+            ) {
+                continue;
+            }
+
+            try {
+                $provider = $this->publishingService->getProvider($socialAccount->platform);
+
+                if ($provider) {
+                    $deleted = $provider->deletePost($socialAccount, $target->external_post_id);
+
+                    \Illuminate\Support\Facades\Log::info("Platform delete on {$socialAccount->platform}", [
+                        'post_id'          => $post->id,
+                        'external_post_id' => $target->external_post_id,
+                        'deleted'          => $deleted,
+                    ]);
+                }
+            } catch (\Exception $e) {
+                // Log error but don't block local deletion
+                \Illuminate\Support\Facades\Log::warning("Could not delete post from {$socialAccount->platform}: " . $e->getMessage(), [
+                    'post_id'          => $post->id,
+                    'external_post_id' => $target->external_post_id,
+                ]);
+            }
+        }
+
+        // ── Step 2: Delete from local database ───────────────────────────────
         $this->auditLogService->log('post.deleted', $workspace, $user, ['post_id' => $post->id]);
         return $post->delete();
     }

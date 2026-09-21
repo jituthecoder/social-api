@@ -39,6 +39,11 @@ class TwitterProvider extends AbstractSocialProvider
         return 'twitter';
     }
 
+    // Twitter/X API timeout overrides
+    protected int $timeoutDefault = 30;
+    protected int $timeoutUpload  = 90;   // Media upload
+    protected int $maxRetries     = 3;
+
     // ──────────────────────────────────────────────────────────────────────
     // OAuth 2.0 with PKCE Flow
     // ──────────────────────────────────────────────────────────────────────
@@ -317,9 +322,7 @@ class TwitterProvider extends AbstractSocialProvider
         }
 
         // Execute Tweet creation via v2 API
-        $response = Http::withToken($accessToken)
-            ->contentType('application/json')
-            ->post(self::TWEETS_URL, $payload);
+        $response = $this->apiPost(self::TWEETS_URL, $accessToken, $payload, ['Content-Type' => 'application/json']);
 
         if ($response->failed()) {
             Log::error('X (Twitter) publish failed', [
@@ -376,9 +379,7 @@ class TwitterProvider extends AbstractSocialProvider
                 return null;
             }
 
-            $res = Http::withToken($accessToken)
-                ->attach('media', $binary, $mediaItem->original_name ?: 'upload.jpg')
-                ->post(self::UPLOAD_URL);
+            $res = $this->apiUploadAttach(self::UPLOAD_URL, $accessToken, $binary, $mediaItem->original_name ?: 'upload.jpg');
 
             if ($res->successful()) {
                 return (string) ($res->json('media_id_string') ?? $res->json('media_id'));
@@ -408,9 +409,7 @@ class TwitterProvider extends AbstractSocialProvider
                 return ['success' => false, 'error_message' => 'Unable to read media.'];
             }
 
-            $res = Http::withToken($token->access_token)
-                ->attach('media', $binary, 'media.jpg')
-                ->post(self::UPLOAD_URL);
+            $res = $this->apiUploadAttach(self::UPLOAD_URL, $token->access_token, $binary, 'media.jpg');
 
             if ($res->successful()) {
                 return [
@@ -436,8 +435,7 @@ class TwitterProvider extends AbstractSocialProvider
             return false;
         }
 
-        $res = Http::withToken($token->access_token)
-            ->delete(self::TWEETS_URL . "/{$externalPostId}");
+        $res = $this->apiDelete(self::TWEETS_URL . "/{$externalPostId}", $token->access_token);
 
         return $res->successful() && ($res->json('data.deleted') === true);
     }

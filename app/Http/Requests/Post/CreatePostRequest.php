@@ -15,7 +15,7 @@ class CreatePostRequest extends FormRequest
     {
         return [
             'title' => ['nullable', 'string', 'max:255'],
-            'content' => ['required', 'string'],
+            'content' => ['nullable', 'string'],
             'scheduled_at' => ['nullable', 'date'],
             'is_scheduled' => ['nullable', 'boolean'],
             'publish_now' => ['nullable', 'boolean'],
