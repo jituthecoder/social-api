@@ -94,7 +94,10 @@ class RazorpayService
 
     public function verifyAndProcessPayment(string $orderId, string $paymentId, string $signature): Subscription
     {
-        $payment = Payment::where('razorpay_order_id', $orderId)->firstOrFail();
+        $payment = Payment::where('razorpay_order_id', $orderId)->first();
+        if (!$payment) {
+            throw new Exception("Invalid order ID. No payment record found for order_id: {$orderId}");
+        }
 
         // Verify Razorpay HMAC signature if credentials exist
         if (!empty($this->keySecret) && !str_starts_with($orderId, 'order_mock_')) {
