@@ -62,4 +62,10 @@ class Workspace extends Model
     {
         return $this->hasMany(UsageRecord::class);
     }
+
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class);
+    }
 }
+

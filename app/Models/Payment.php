@@ -6,30 +6,37 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class Subscription extends Model
+class Payment extends Model
 {
     use HasFactory;
 
     protected $fillable = [
         'workspace_id',
+        'user_id',
         'subscription_plan_id',
-        'billing_cycle',
-        'status',
-        'trial_ends_at',
-        'ends_at',
-        'stripe_id',
         'razorpay_order_id',
         'razorpay_payment_id',
+        'razorpay_signature',
+        'amount',
+        'currency',
+        'billing_cycle',
+        'status',
+        'meta',
     ];
 
     protected $casts = [
-        'trial_ends_at' => 'datetime',
-        'ends_at' => 'datetime',
+        'amount' => 'decimal:2',
+        'meta' => 'array',
     ];
 
     public function workspace(): BelongsTo
     {
         return $this->belongsTo(Workspace::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
     }
 
     public function plan(): BelongsTo

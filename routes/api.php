@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\AIController;
 use App\Http\Controllers\Api\V1\AnalyticsController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\MediaController;
+use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\PostController;
 use App\Http\Controllers\Api\V1\SocialAccountController;
 use App\Http\Controllers\Api\V1\SubscriptionController;
@@ -33,6 +34,9 @@ Route::prefix('v1')->group(function () {
 
     // Public Subscription Plans
     Route::get('/subscription/plans', [SubscriptionController::class, 'plans']);
+
+    // Public Razorpay Webhook Callback
+    Route::post('/payments/razorpay/webhook', [PaymentController::class, 'handleWebhook']);
 
     // Protected Routes (Sanctum)
     Route::middleware('auth:sanctum')->group(function () {
@@ -66,8 +70,11 @@ Route::prefix('v1')->group(function () {
         // Analytics
         Route::get('/analytics', [AnalyticsController::class, 'index']);
 
-        // Subscription Usage
+        // Subscription & Payments
         Route::get('/subscription/usage', [SubscriptionController::class, 'usage']);
+        Route::post('/payments/razorpay/create-order', [PaymentController::class, 'createOrder']);
+        Route::post('/payments/razorpay/verify', [PaymentController::class, 'verifyPayment']);
+        Route::get('/payments/history', [PaymentController::class, 'history']);
     });
 
     // Public OAuth Callback
