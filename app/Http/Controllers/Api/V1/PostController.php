@@ -82,11 +82,11 @@ class PostController extends Controller
         );
 
         if ($request->boolean('publish_now')) {
-            \App\Jobs\PublishPostJob::dispatch($post);
+            $this->publishingService->publishPost($post);
             $post->load(['variants', 'targets.socialAccount', 'media', 'publishAttempts']);
         }
 
-        return $this->successResponse($post, 'Post created and queued for publishing', 201);
+        return $this->successResponse($post, 'Post created successfully', 201);
     }
 
     public function publish(Request $request, Post $post): JsonResponse
@@ -94,14 +94,14 @@ class PostController extends Controller
         $workspace = $this->resolveWorkspace($request);
         Gate::authorize('update', [$post, $workspace]);
 
-        \App\Jobs\PublishPostJob::dispatch($post);
+        $published = $this->publishingService->publishPost($post);
 
         $post->load(['variants', 'targets.socialAccount', 'media', 'publishAttempts']);
 
         return $this->successResponse([
             'post' => $post,
-            'success' => true,
-        ], 'Post queued for publishing');
+            'success' => $published,
+        ], $published ? 'Post published successfully' : 'Publishing failed or partially failed');
     }
 
     public function show(Request $request, Post $post): JsonResponse
