@@ -46,21 +46,60 @@ class Media extends Model
             ->withTimestamps();
     }
 
+    // In-memory cache to avoid re-reading or re-downloading the same media multiple times in one request
+    protected ?string $cachedBinary = null;
+
     public function getBinaryContent(): ?string
     {
-        $disk = $this->metadata['disk'] ?? config('filesystems.default', 'public');
-        if (\Illuminate\Support\Facades\Storage::disk($disk)->exists($this->path)) {
-            return \Illuminate\Support\Facades\Storage::disk($disk)->get($this->path);
+        if ($this->cachedBinary !== null) {
+            return $this->cachedBinary;
         }
 
-        if (!empty($this->metadata['local_path']) && file_exists($this->metadata['local_path'])) {
-            return file_get_contents($this->metadata['local_path']);
+        // 1. FASTEST: Check local storage path on disk (0ms latency, zero cloud network overhead)
+        if (!empty($this->path) && trim($this->path) !== '') {
+            $localFallback = storage_path('app/public/' . ltrim($this->path, '/'));
+            if (file_exists($localFallback) && is_file($localFallback)) {
+                $content = @file_get_contents($localFallback);
+                if ($content !== false && strlen($content) > 0) {
+                    return $this->cachedBinary = $content;
+                }
+            }
         }
 
-        if (filter_var($this->url, FILTER_VALIDATE_URL)) {
-            $content = @file_get_contents($this->url);
-            if ($content !== false) {
-                return $content;
+        // 2. Check explicit local path metadata
+        if (!empty($this->metadata['local_path']) && file_exists($this->metadata['local_path']) && is_file($this->metadata['local_path'])) {
+            $content = @file_get_contents($this->metadata['local_path']);
+            if ($content !== false && strlen($content) > 0) {
+                return $this->cachedBinary = $content;
+            }
+        }
+
+        // 3. Cloud Storage (AWS S3, Google Cloud, Cloudflare R2, MinIO)
+        if (!empty($this->path) && trim($this->path) !== '') {
+            $disk = $this->metadata['disk'] ?? config('filesystems.default', 'public');
+            if ($disk !== 'public' && $disk !== 'local') {
+                try {
+                    if (\Illuminate\Support\Facades\Storage::disk($disk)->exists($this->path)) {
+                        $content = \Illuminate\Support\Facades\Storage::disk($disk)->get($this->path);
+                        if ($content !== null && $content !== false && strlen($content) > 0) {
+                            return $this->cachedBinary = $content;
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning("Storage disk [{$disk}] getBinaryContent failed for path [{$this->path}]: " . $e->getMessage());
+                }
+            }
+        }
+
+        // 4. Fallback: Download from public URL via HTTP client with timeout
+        if (!empty($this->url) && filter_var($this->url, FILTER_VALIDATE_URL)) {
+            try {
+                $response = \Illuminate\Support\Facades\Http::timeout(15)->get($this->url);
+                if ($response->successful() && strlen($response->body()) > 0) {
+                    return $this->cachedBinary = $response->body();
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Failed to fetch binary content from URL [{$this->url}]: " . $e->getMessage());
             }
         }
 
@@ -69,16 +108,38 @@ class Media extends Model
 
     public function getLocalFilePath(): ?string
     {
-        $disk = $this->metadata['disk'] ?? config('filesystems.default', 'public');
-        if ($disk === 'public') {
-            $fullPath = storage_path('app/public/' . $this->path);
-            if (file_exists($fullPath)) {
+        // 1. Direct local path from metadata
+        if (!empty($this->metadata['local_path']) && file_exists($this->metadata['local_path']) && is_file($this->metadata['local_path'])) {
+            return $this->metadata['local_path'];
+        }
+
+        // 2. Direct public storage path
+        if (!empty($this->path) && trim($this->path) !== '') {
+            $fullPath = storage_path('app/public/' . ltrim($this->path, '/'));
+            if (file_exists($fullPath) && is_file($fullPath)) {
                 return $fullPath;
             }
         }
 
-        if (!empty($this->metadata['local_path']) && file_exists($this->metadata['local_path'])) {
-            return $this->metadata['local_path'];
+        // 3. For Cloud-stored media (AWS S3, Google Cloud, R2):
+        // Check if temporary cached file already exists on disk — DO NOT re-download!
+        $tempDir = storage_path('app/temp');
+        $ext = $this->metadata['extension'] ?? pathinfo($this->filename ?? 'media', PATHINFO_EXTENSION) ?: 'jpg';
+        $tempFile = $tempDir . '/' . md5($this->id . ($this->path ?? $this->url ?? 'media')) . '.' . $ext;
+
+        if (file_exists($tempFile) && filesize($tempFile) > 0) {
+            return $tempFile;
+        }
+
+        // 4. Download once and save to temp cache
+        $binary = $this->getBinaryContent();
+        if ($binary) {
+            if (!is_dir($tempDir)) {
+                @mkdir($tempDir, 0755, true);
+            }
+            if (file_put_contents($tempFile, $binary) !== false) {
+                return $tempFile;
+            }
         }
 
         return null;
