@@ -321,7 +321,10 @@ class InstagramProvider extends AbstractSocialProvider
 
         $creationId = $containerResponse->json('id');
 
-        // Step 2: Publish Container
+        // Step 2: Ensure Instagram servers have downloaded and processed the image container
+        $this->waitForContainerStatus($creationId, $accessToken, 8);
+
+        // Step 3: Publish Container
         return $this->publishContainer($igUserId, $accessToken, $creationId);
     }
 
@@ -429,12 +432,31 @@ class InstagramProvider extends AbstractSocialProvider
 
     protected function publishContainer(string $igUserId, string $accessToken, string $creationId): array
     {
-        $publishResponse = Http::asForm()->post(self::GRAPH_URL . "/{$igUserId}/media_publish", [
-            'creation_id'  => $creationId,
-            'access_token' => $accessToken,
-        ]);
+        $publishResponse = null;
 
-        if ($publishResponse->failed()) {
+        for ($attempt = 0; $attempt < 4; $attempt++) {
+            $publishResponse = Http::asForm()->post(self::GRAPH_URL . "/{$igUserId}/media_publish", [
+                'creation_id'  => $creationId,
+                'access_token' => $accessToken,
+            ]);
+
+            if ($publishResponse->successful()) {
+                break;
+            }
+
+            $errorCode    = (int) $publishResponse->json('error.code');
+            $errorSubcode = (int) $publishResponse->json('error.error_subcode');
+
+            // 9007 / 2207027: Media is still downloading or processing on Instagram servers, retry
+            if (($errorCode === 9007 || $errorSubcode === 2207027) && $attempt < 3) {
+                sleep(3);
+                continue;
+            }
+
+            break;
+        }
+
+        if (!$publishResponse || $publishResponse->failed()) {
             return $this->formatErrorResponse($publishResponse, 'Instagram media publish failed');
         }
 
