@@ -60,8 +60,14 @@ class MediaService
     public function deleteMedia(Media $media, Workspace $workspace, User $user): bool
     {
         $disk = $media->metadata['disk'] ?? config('filesystems.default', 'public');
-        if (Storage::disk($disk)->exists($media->path)) {
-            Storage::disk($disk)->delete($media->path);
+        if (!empty($media->path) && trim($media->path) !== '') {
+            try {
+                if (Storage::disk($disk)->exists($media->path)) {
+                    Storage::disk($disk)->delete($media->path);
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Failed to delete media path [{$media->path}] from disk [{$disk}]: " . $e->getMessage());
+            }
         }
 
         $this->auditLogService->log('media.deleted', $workspace, $user, ['media_id' => $media->id]);

@@ -504,10 +504,10 @@ class InstagramProvider extends AbstractSocialProvider
     {
         $url = $mediaItem->url;
 
-        if (!empty($mediaItem->path) && function_exists('imagecreatefromstring')) {
-            $localPath = storage_path('app/public/' . $mediaItem->path);
+        if (function_exists('imagecreatefromstring')) {
+            $localPath = $mediaItem->getLocalFilePath();
 
-            if (file_exists($localPath)) {
+            if ($localPath && file_exists($localPath)) {
                 $ext = strtolower(pathinfo($localPath, PATHINFO_EXTENSION));
 
                 // Always work with a JPG for Instagram
@@ -567,8 +567,23 @@ class InstagramProvider extends AbstractSocialProvider
                     }
 
                     if (file_exists($jpgLocalPath)) {
-                        // Rewrite URL to point at the _ig.jpg version
-                        $url = preg_replace('/\.[^.]+$/', '_ig.jpg', $url);
+                        $disk = $mediaItem->metadata['disk'] ?? config('filesystems.default', 'public');
+                        if ($disk !== 'public' && !empty($mediaItem->path)) {
+                            $cloudJpgPath = preg_replace('/\.[^.]+$/', '_ig.jpg', $mediaItem->path);
+                            try {
+                                \Illuminate\Support\Facades\Storage::disk($disk)->put(
+                                    $cloudJpgPath,
+                                    file_get_contents($jpgLocalPath),
+                                    'public'
+                                );
+                                $url = \Illuminate\Support\Facades\Storage::disk($disk)->url($cloudJpgPath);
+                            } catch (\Throwable $e) {
+                                Log::warning("Could not upload prepared Instagram image to cloud disk [{$disk}]: " . $e->getMessage());
+                                $url = preg_replace('/\.[^.]+$/', '_ig.jpg', $url);
+                            }
+                        } else {
+                            $url = preg_replace('/\.[^.]+$/', '_ig.jpg', $url);
+                        }
                     }
                 }
             }
