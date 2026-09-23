@@ -23,12 +23,40 @@ class MediaService
         $filename = Str::uuid() . '.' . $extension;
 
         $folder = 'workspaces/' . $workspace->id . '/' . (str_starts_with($mimeType, 'video/') ? 'videos' : 'images');
-        $path = $file->storeAs($folder, $filename, $disk);
+        
+        $path = false;
+        try {
+            $path = $file->storeAs($folder, $filename, $disk);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("Storage disk [{$disk}] storeAs failed: " . $e->getMessage());
+            $path = false;
+        }
 
-        // Generate URL for asset
-        $url = Storage::disk($disk)->url($path);
-        if ($disk === 'public' && !str_starts_with($url, 'http')) {
-            $url = rtrim(config('app.url', 'http://localhost:8000'), '/') . '/' . ltrim($url, '/');
+        // If cloud disk (e.g. S3) failed or credentials missing, gracefully fallback to local public disk
+        if (!$path && $disk !== 'public') {
+            $disk = 'public';
+            try {
+                $path = $file->storeAs($folder, $filename, 'public');
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error("Public disk fallback storeAs failed: " . $e->getMessage());
+            }
+        }
+
+        if (!$path) {
+            throw new \RuntimeException('Failed to store uploaded file on disk.');
+        }
+
+        // Generate URL safely without calling AWS with empty or invalid keys
+        $url = null;
+        try {
+            $url = Storage::disk($disk)->url($path);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("Failed to generate URL for disk [{$disk}] path [{$path}]: " . $e->getMessage());
+        }
+
+        if (!$url || ($disk === 'public' && !str_starts_with($url, 'http'))) {
+            $baseUrl = rtrim(config('app.url', 'http://localhost:8000'), '/');
+            $url = $baseUrl . '/storage/' . ltrim($path, '/');
         }
 
         $media = Media::create([
