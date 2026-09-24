@@ -199,8 +199,13 @@ class PostService
         $platformDeleted = false;
         $platformName = $socialAccount?->platform ?? 'unknown';
 
-        // 1. Delete on the remote social media platform if external ID exists
+        // Instagram does NOT support API-based deletion (Meta limitation).
+        // We only remove from our database. User must delete manually from Instagram app/web.
+        $isInstagram = in_array($platformName, ['instagram']);
+
+        // 1. Delete on the remote social media platform if external ID exists (skip Instagram)
         if (
+            !$isInstagram &&
             $socialAccount &&
             !empty($target->external_post_id) &&
             $socialAccount->connection_status === 'connected'
@@ -222,6 +227,13 @@ class PostService
                     'target_id' => $target->id,
                 ]);
             }
+        }
+
+        if ($isInstagram) {
+            \Illuminate\Support\Facades\Log::info("Instagram target removed from database only (API deletion not supported by Meta)", [
+                'post_id' => $post->id,
+                'target_id' => $target->id,
+            ]);
         }
 
         // 2. Delete corresponding PostVariant for this platform / account
@@ -257,12 +269,12 @@ class PostService
         $this->auditLogService->log('post.target_deleted', $workspace, $user, [
             'post_id' => $post->id,
             'platform' => $platformName,
-            'platform_deleted' => $platformDeleted,
+            'platform_deleted' => $isInstagram ? 'manual_only' : $platformDeleted,
         ]);
 
         return [
             'platform' => $platformName,
-            'remote_deleted' => $platformDeleted,
+            'remote_deleted' => $isInstagram ? 'manual_only' : $platformDeleted,
             'remaining_targets_count' => $remainingTargets->count(),
         ];
     }
@@ -281,6 +293,15 @@ class PostService
                 !$socialAccount ||
                 $socialAccount->connection_status !== 'connected'
             ) {
+                continue;
+            }
+
+            // Skip Instagram — Meta does not support API-based deletion
+            if ($socialAccount->platform === 'instagram') {
+                \Illuminate\Support\Facades\Log::info("Skipping Instagram API delete (not supported by Meta)", [
+                    'post_id'          => $post->id,
+                    'external_post_id' => $target->external_post_id,
+                ]);
                 continue;
             }
 
