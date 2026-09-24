@@ -92,15 +92,15 @@ class RazorpayService
         ];
     }
 
-    public function verifyAndProcessPayment(string $orderId, string $paymentId, string $signature): Subscription
+    public function verifyAndProcessPayment(string $orderId, string $paymentId, string $signature, bool $skipSignatureVerification = false): Subscription
     {
         $payment = Payment::where('razorpay_order_id', $orderId)->first();
         if (!$payment) {
             throw new Exception("Invalid order ID. No payment record found for order_id: {$orderId}");
         }
 
-        // Verify Razorpay HMAC signature if credentials exist
-        if (!empty($this->keySecret) && !str_starts_with($orderId, 'order_mock_')) {
+        // Verify Razorpay HMAC signature if credentials exist and not skipped (e.g. from verified webhook)
+        if (!$skipSignatureVerification && !empty($this->keySecret) && !str_starts_with($orderId, 'order_mock_')) {
             $expectedSignature = hash_hmac('sha256', $orderId . '|' . $paymentId, $this->keySecret);
             if (!hash_equals($expectedSignature, $signature)) {
                 $payment->update(['status' => 'failed']);
@@ -179,7 +179,8 @@ class RazorpayService
                     $this->verifyAndProcessPayment(
                         $orderId,
                         $paymentId,
-                        $paymentPayload['signature'] ?? 'webhook_verified'
+                        $paymentPayload['signature'] ?? 'webhook_verified',
+                        true
                     );
                 }
             }
